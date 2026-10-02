@@ -899,6 +899,8 @@ Uses OpenCode's plugin system rather than shell hooks. `ccmux setup --agent open
 
 Because one OpenCode server can host many sessions, the daemon folds all markers sharing a server PID into the single ccmux Session for the tmux pane that hosts the server. Status is worst-of (`waiting > working > idle`); `cwd` and `nativeSessionId` come from the newest-activity marker, while `pendingTool` and the attention indicator come from the newest-waiting marker.
 
+OpenCode 2 rejects that plugin and runs its sessions in a shared background service outside your panes, so setup also installs a TUI plugin at `~/.config/opencode/plugins/ccmux/tui.js`, which runs inside each pane's OpenCode and reports the session that pane is showing (OpenCode 1 ignores it). On 2.x, setup removes the 1.x plugin instead of installing it. Notification Approve/Deny buttons are not offered on OpenCode 2 yet.
+
 ### Pi / oh-my-pi
 
 Both use Pi's extension system rather than shell hooks (oh-my-pi, `omp`, is a hard fork of Pi that kept the extension API). `ccmux setup --agent pi` / `--agent omp` drops a single auto-discovered JS extension at `~/.pi/agent/extensions/ccmux.js` or `~/.omp/agent/extensions/ccmux.js`. The extension subscribes to the agent's lifecycle events and writes one marker per session:
