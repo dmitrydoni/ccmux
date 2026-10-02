@@ -268,6 +268,18 @@ describe("OpenCode 2 TUI plugin", () => {
     expect(marker("ses_a")?.pid).toBe(PID);
   });
 
+  it("rewrites its marker if the file goes missing while state is unchanged", async () => {
+    const { fake } = start();
+    fake.route = { type: "session", sessionID: "ses_a" };
+    fake.emit("session.renamed", { sessionID: "ses_a" });
+    await settle();
+    rmSync(join(markersDir, "opencode-ses_a.json"));
+
+    fake.emit("session.renamed", { sessionID: "ses_a" });
+    await settle();
+    expect(marker("ses_a")?.pid).toBe(PID);
+  });
+
   it("removes its marker when the session is deleted", async () => {
     const { fake } = start();
     fake.route = { type: "session", sessionID: "ses_a" };

@@ -23,6 +23,7 @@
 // keeps the daemon's terminal-pattern status for the same session.
 
 import {
+  existsSync,
   mkdirSync,
   readFileSync,
   renameSync,
@@ -128,7 +129,14 @@ export function makeTuiPlugin({
 
     function write(sessionId, fields) {
       const body = JSON.stringify(fields);
-      if (owned === sessionId && body === written) return;
+      // Unchanged state needs no write, unless the file went missing.
+      if (
+        owned === sessionId &&
+        body === written &&
+        existsSync(markerPath(sessionId))
+      ) {
+        return;
+      }
       if (ownedElsewhere(sessionId)) {
         if (owned === sessionId) {
           // Lost a simultaneous claim; the other TUI keeps it.
