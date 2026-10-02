@@ -218,6 +218,64 @@ describe("opencode reader", () => {
     ]);
   });
 
+  describe("after an upgrade to OpenCode 2 (issue #214)", () => {
+    // OpenCode 2 writes `session_v2` into the same database and leaves the
+    // 1.x tables behind; only the columns the guard reads are modeled.
+    function insertV2Session(id: string, directory: string, timeUpdated: number) {
+      db.exec(
+        "CREATE TABLE IF NOT EXISTS session_v2 (id TEXT PRIMARY KEY, directory TEXT NOT NULL, time_updated INTEGER NOT NULL)",
+      );
+      db.query(
+        "INSERT INTO session_v2 (id, directory, time_updated) VALUES (?, ?, ?)",
+      ).run(id, directory, timeUpdated);
+    }
+
+    beforeEach(() => {
+      insertSession("ses_v1", "/tmp/proj", 500);
+      seedExchange("ses_v1", 500, "v1 prompt", "v1 reply");
+    });
+
+    it("refuses the cwd fallback when the cwd has newer 2.x activity", async () => {
+      insertV2Session("ses_v2", "/tmp/proj", 900);
+      const result = await readOpenCodeTranscript(
+        dbPath,
+        { cwd: "/tmp/proj" },
+        1,
+      );
+      expect(result).toBeNull();
+    });
+
+    it("keeps the fallback when the 1.x session is the newer one", async () => {
+      insertV2Session("ses_v2", "/tmp/proj", 100);
+      const result = await readOpenCodeTranscript(
+        dbPath,
+        { cwd: "/tmp/proj" },
+        1,
+      );
+      expect(result?.turns[0]?.text).toBe("v1 reply");
+    });
+
+    it("ignores 2.x activity in a different cwd", async () => {
+      insertV2Session("ses_v2", "/tmp/elsewhere", 900);
+      const result = await readOpenCodeTranscript(
+        dbPath,
+        { cwd: "/tmp/proj" },
+        1,
+      );
+      expect(result?.turns[0]?.text).toBe("v1 reply");
+    });
+
+    it("still reads an explicit nativeSessionId", async () => {
+      insertV2Session("ses_v2", "/tmp/proj", 900);
+      const result = await readOpenCodeTranscript(
+        dbPath,
+        { cwd: "/tmp/proj", nativeSessionId: "ses_v1" },
+        1,
+      );
+      expect(result?.turns[0]?.text).toBe("v1 reply");
+    });
+  });
+
   it("returns null when no session matches the cwd", async () => {
     insertSession("ses_1", "/tmp/other", 100);
     seedExchange("ses_1", 100, "hi", "hello");

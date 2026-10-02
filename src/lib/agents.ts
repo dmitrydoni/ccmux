@@ -255,6 +255,14 @@ export interface AgentDef {
    * pattern is positional (`/(^|\s)\/\S/`). A matching reply is refused
    * fail-closed at the accept path (409, text preserved via re-notify)
    * instead of typed into the pane.
+   *
+   * `approvalKeysVerifiedThroughMajor` is the newest major version of the
+   * agent whose permission prompt `approve`/`deny` were verified against. A
+   * session on a newer major, or one whose version has not resolved, gets
+   * neither key (see `sessionNotificationActions`), because a prompt
+   * redesign can turn a deny sequence into an approve. It describes these
+   * builtin keys, so a user override, which replaces the map wholesale,
+   * drops it along with them.
    */
   notificationActions?: {
     approve?: string[];
@@ -267,6 +275,7 @@ export interface AgentDef {
     replyOnQuestion?: boolean;
     replyOnFinished?: boolean;
     unsafeReplyPattern?: RegExp;
+    approvalKeysVerifiedThroughMajor?: number;
   };
   /**
    * This agent's permission-prompt marker cannot be trusted to mean a real
@@ -789,11 +798,19 @@ export const BUILTIN_AGENTS: AgentDef[] = [
     // OpenCode trims the leading space in front of `!` and enters SHELL MODE,
     // where Enter EXECUTES the text as a real shell command. Hence the
     // unsafeReplyPattern.
+    //
+    // Approve/Deny stop at 1.x (issue #214). OpenCode 2's option row wraps
+    // around and drops "Always allow" when a request carries no save
+    // patterns, so `Right, Right, Enter` from the initial "Allow once" lands
+    // back on "Allow once" and APPROVES (`packages/tui/src/routes/session/
+    // permission.tsx` at v2.0.21). Re-verify against a live 2.x before
+    // raising this.
     notificationActions: {
       approve: ["Enter"],
       deny: ["Right", "Right", "Enter"],
       replyOnFinished: true,
       unsafeReplyPattern: /^\s*!/,
+      approvalKeysVerifiedThroughMajor: 1,
     },
     invokeMode: {
       // `--format json` emits one event per line; default output prints a
@@ -1786,4 +1803,37 @@ export function findAgentForProcess(
     }
   }
   return null;
+}
+
+/**
+ * The major version in a resolved agent version string (`Session.version`,
+ * already stripped of any `v`), or null when it is absent or unparseable.
+ */
+export function parseMajorVersion(
+  version: string | null | undefined,
+): number | null {
+  const match = version?.trim().match(/^v?(\d+)(?:\.|$)/i);
+  return match ? Number(match[1]) : null;
+}
+
+/**
+ * The notification actions a session may be offered or may press: the
+ * agent's map, minus `approve`/`deny` when `approvalKeysVerifiedThroughMajor`
+ * does not vouch for the session's major version. An unresolved version
+ * fails closed, since the keys are only safe on a prompt they were checked
+ * against. Every other field passes through untouched.
+ */
+export function sessionNotificationActions(
+  agentDef: AgentDef | undefined,
+  version: string | null | undefined,
+): AgentDef["notificationActions"] {
+  const actions = agentDef?.notificationActions;
+  const verifiedThrough = actions?.approvalKeysVerifiedThroughMajor;
+  if (!actions || verifiedThrough === undefined) return actions;
+  const major = parseMajorVersion(version);
+  if (major !== null && major <= verifiedThrough) return actions;
+  const gated = { ...actions };
+  delete gated.approve;
+  delete gated.deny;
+  return gated;
 }

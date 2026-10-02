@@ -4,6 +4,8 @@ import {
   findAgentForProcess,
   forkableAgentNames,
   getAgents,
+  parseMajorVersion,
+  sessionNotificationActions,
 } from "./agents";
 import { extractVersionFromOutput } from "../daemon/version-resolver";
 
@@ -712,6 +714,68 @@ describe("built-in agent notificationActions defaults", () => {
     // Plain replies must still pass.
     expect(pattern!.test("looks good, ship it")).toBe(false);
     expect(pattern!.test("see src/lib/agents.ts")).toBe(false);
+  });
+});
+
+describe("parseMajorVersion", () => {
+  it("reads the leading major of a resolved version", () => {
+    expect(parseMajorVersion("1.18.34")).toBe(1);
+    expect(parseMajorVersion("2.0.21")).toBe(2);
+    expect(parseMajorVersion("v2.0.21")).toBe(2);
+    expect(parseMajorVersion("2026.04.17-787b533")).toBe(2026);
+    expect(parseMajorVersion("3")).toBe(3);
+  });
+
+  it("is null when there is nothing to read", () => {
+    expect(parseMajorVersion(null)).toBeNull();
+    expect(parseMajorVersion(undefined)).toBeNull();
+    expect(parseMajorVersion("")).toBeNull();
+    expect(parseMajorVersion("opencode v2.0.21")).toBeNull();
+  });
+});
+
+describe("sessionNotificationActions", () => {
+  const opencode = BUILTIN_AGENTS.find((a) => a.name === "opencode");
+  const claude = BUILTIN_AGENTS.find((a) => a.name === "claude");
+
+  it("keeps OpenCode's approval keys on the verified 1.x prompt", () => {
+    const actions = sessionNotificationActions(opencode, "1.18.34");
+    expect(actions?.approve).toEqual(["Enter"]);
+    expect(actions?.deny).toEqual(["Right", "Right", "Enter"]);
+  });
+
+  it("drops them on OpenCode 2, whose wrapping row turns Deny into Approve (issue #214)", () => {
+    const actions = sessionNotificationActions(opencode, "2.0.21");
+    expect(actions?.approve).toBeUndefined();
+    expect(actions?.deny).toBeUndefined();
+    // Everything else is left as it was.
+    expect(actions?.replyOnFinished).toBe(true);
+    expect(actions?.unsafeReplyPattern).toEqual(/^\s*!/);
+  });
+
+  it("fails closed while the session's version is unresolved", () => {
+    const actions = sessionNotificationActions(opencode, null);
+    expect(actions?.approve).toBeUndefined();
+    expect(actions?.deny).toBeUndefined();
+  });
+
+  it("does not mutate the agent's own map", () => {
+    sessionNotificationActions(opencode, "2.0.21");
+    expect(opencode?.notificationActions?.deny).toEqual([
+      "Right",
+      "Right",
+      "Enter",
+    ]);
+  });
+
+  it("passes an ungated agent's map through whatever its version", () => {
+    expect(sessionNotificationActions(claude, null)).toBe(
+      claude?.notificationActions,
+    );
+  });
+
+  it("is undefined for an unknown agent", () => {
+    expect(sessionNotificationActions(undefined, "1.0.0")).toBeUndefined();
   });
 });
 

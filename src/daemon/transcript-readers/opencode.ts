@@ -25,6 +25,8 @@
  * ASSISTANT message is newest among every session sharing the ccmux row's
  * cwd — a heuristic, not a guarantee, and a known soft spot: an aggregated
  * row's OTHER concurrent session could be the one the caller actually wants.
+ * The fallback yields nothing once the cwd has newer OpenCode 2 activity
+ * (see `newestOpenCode2Activity`).
  */
 
 import { Database } from "bun:sqlite";
@@ -123,13 +125,40 @@ function resolveSessionId(
     try {
       const data = JSON.parse(row.data);
       if (data && typeof data === "object" && data.role === "assistant") {
-        return row.session_id;
+        return newestOpenCode2Activity(db, cwd) >= row.time_created
+          ? null
+          : row.session_id;
       }
     } catch {
       continue;
     }
   }
   return null;
+}
+
+/**
+ * Newest `time_updated` among the cwd's OpenCode 2 sessions, or -Infinity
+ * when there are none (or no `session_v2` table, i.e. 1.x never upgraded).
+ *
+ * OpenCode 2 writes its sessions to `session_v2`/`session_message` in the
+ * same database and leaves the 1.x tables behind (issue #214). This reader
+ * only reads the 1.x tables, so once the cwd has seen newer 2.x activity its
+ * newest 1.x session is stale history rather than what the pane is running,
+ * and handing it to `ccmux handoff` would relay the wrong conversation.
+ * Returning null instead lets `ccmux last` fall back to the pane capture.
+ */
+function newestOpenCode2Activity(db: Database, cwd: string): number {
+  try {
+    const row = db
+      .query<
+        { newest: number | null },
+        [string]
+      >("SELECT MAX(time_updated) AS newest FROM session_v2 WHERE directory = ?")
+      .get(cwd);
+    return row?.newest ?? -Infinity;
+  } catch {
+    return -Infinity;
+  }
 }
 
 function readOpenCodeSession(
