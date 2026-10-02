@@ -276,6 +276,96 @@ describe("opencode reader", () => {
     });
   });
 
+  describe("an OpenCode 2 session", () => {
+    // OpenCode 2's own tables, as 2.0.21 writes them: one `session_message`
+    // row per user prompt, assistant step and turn-ending `idle`.
+    let seq = 0;
+    beforeEach(() => {
+      seq = 0;
+      db.exec(`
+        CREATE TABLE session_v2 (id TEXT PRIMARY KEY, directory TEXT NOT NULL, time_updated INTEGER NOT NULL);
+        CREATE TABLE session_message (
+          id TEXT PRIMARY KEY, session_id TEXT NOT NULL, type TEXT NOT NULL,
+          seq INTEGER NOT NULL, time_created INTEGER NOT NULL,
+          time_updated INTEGER NOT NULL, data TEXT NOT NULL
+        );
+      `);
+      db.query(
+        "INSERT INTO session_v2 (id, directory, time_updated) VALUES ('ses_v2', '/tmp/proj', 1)",
+      ).run();
+    });
+
+    function row(type: string, time: number, data: unknown) {
+      seq++;
+      db.query(
+        "INSERT INTO session_message (id, session_id, type, seq, time_created, time_updated, data) VALUES (?, 'ses_v2', ?, ?, ?, ?, ?)",
+      ).run(`msg_${seq}`, type, seq, time, time, JSON.stringify(data));
+    }
+    const user = (time: number, text: string) => row("user", time, { text });
+    const step = (time: number, ...content: unknown[]) =>
+      row("assistant", time, { content });
+    const idle = (time: number, outcome: string) =>
+      row("idle", time, { outcome });
+    const read = (turns: number) =>
+      readOpenCodeTranscript(dbPath, { cwd: "/tmp/proj", nativeSessionId: "ses_v2" }, turns);
+
+    it("joins a turn's text across its steps, skipping reasoning and tools", async () => {
+      user(100, "run it");
+      step(110, { type: "reasoning", text: "thinking" }, { type: "tool" });
+      step(120, { type: "reasoning", text: "done" }, { type: "text", text: "It printed ok." });
+      idle(130, "succeeded");
+
+      const result = await read(1);
+      expect(result?.turns).toEqual([
+        { role: "assistant", text: "It printed ok.", timestamp: new Date(120).toISOString() },
+      ]);
+    });
+
+    it("skips turns that failed, were interrupted, or are still running", async () => {
+      user(100, "first");
+      step(110, { type: "text", text: "first reply" });
+      idle(120, "succeeded");
+      user(200, "failed one");
+      step(210, { type: "text", text: "partial" });
+      idle(220, "failed");
+      // A declined permission ends the turn with no idle row at all.
+      user(300, "declined one");
+      step(310, { type: "text", text: "about to run" });
+      user(400, "still running");
+      step(410, { type: "text", text: "streaming" });
+
+      const result = await read(1);
+      expect(result?.turns.map((t) => t.text)).toEqual(["first reply"]);
+    });
+
+    it("pairs prompts with replies in the between-prompt shape (2N-1)", async () => {
+      user(100, "q1");
+      step(110, { type: "text", text: "a1" });
+      idle(120, "succeeded");
+      user(200, "q2");
+      step(210, { type: "text", text: "a2" });
+      idle(220, "succeeded");
+
+      const result = await read(2);
+      expect(result?.turns.map((t) => [t.role, t.text])).toEqual([
+        ["assistant", "a1"],
+        ["user", "q2"],
+        ["assistant", "a2"],
+      ]);
+    });
+
+    it("leaves a 1.x session in the same database to the 1.x tables", async () => {
+      insertSession("ses_v1", "/tmp/proj", 50);
+      seedExchange("ses_v1", 50, "v1 prompt", "v1 reply");
+      const result = await readOpenCodeTranscript(
+        dbPath,
+        { cwd: "/tmp/proj", nativeSessionId: "ses_v1" },
+        1,
+      );
+      expect(result?.turns[0]?.text).toBe("v1 reply");
+    });
+  });
+
   it("returns null when no session matches the cwd", async () => {
     insertSession("ses_1", "/tmp/other", 100);
     seedExchange("ses_1", 100, "hi", "hello");
