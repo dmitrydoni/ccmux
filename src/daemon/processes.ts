@@ -501,6 +501,32 @@ async function readProcfsCwd(
 }
 
 /**
+ * The executable a process is running, from `/proc/<pid>/exe`, or null where
+ * there is no procfs or the link cannot be read. Probing `<path> --version`
+ * is how an agent launched by a bare name (absent from the daemon's PATH)
+ * gets a version, and lsof, the only other source, is not installed by
+ * default on several distros.
+ *
+ * Unlike a cwd, a `(deleted)` target is NOT stripped: the binary was replaced
+ * while the process ran (an in-place upgrade), so the bare path now answers
+ * for the replacement's version, not this process's.
+ */
+export async function readProcfsExecutable(
+  pid: number,
+  platform: DiscoveryPlatform = PLATFORM,
+): Promise<string | null> {
+  if (platform.cwdSource !== "procfs") return null;
+  let target: string;
+  try {
+    target = await platform.readLink(`/proc/${pid}/exe`);
+  } catch {
+    return null;
+  }
+  if (!target || target.endsWith(PROCFS_DELETED_SUFFIX)) return null;
+  return target;
+}
+
+/**
  * A concrete terminal device: `/dev/ttys001`, `/dev/tty1`, `/dev/pts/3`.
  *
  * Deliberately requires a numbered device, so `/dev/null` (codex runs with

@@ -10,6 +10,7 @@ import {
   discoverAgentProcessesOrThrow,
   dropWrapperParents,
   readProcfsCwds,
+  readProcfsExecutable,
   resolveDiscoveredProcesses,
   ProcessDiscoveryError,
   FD_TTY_DISCOVERY,
@@ -379,6 +380,49 @@ describe("readProcfsCwds", () => {
     const byPid = await readProcfsCwds([9_999_901], PS_TTY_DISCOVERY.readLink);
 
     expect(byPid.get(9_999_901)?.cwd).toBeNull();
+  });
+});
+
+describe("readProcfsExecutable", () => {
+  const procfs = (readLink: (path: string) => Promise<string>) => ({
+    ...PS_TTY_DISCOVERY,
+    readLink,
+  });
+
+  it("reads the pid's exe link", async () => {
+    let asked = "";
+    const path = await readProcfsExecutable(
+      100,
+      procfs(async (p) => {
+        asked = p;
+        return "/home/u/.opencode/bin/opencode";
+      }),
+    );
+    expect(asked).toBe("/proc/100/exe");
+    expect(path).toBe("/home/u/.opencode/bin/opencode");
+  });
+
+  it("is null for a binary replaced while the process ran", async () => {
+    // The bare path would now describe the replacement, not this process.
+    const path = await readProcfsExecutable(
+      100,
+      procfs(async () => "/home/u/.opencode/bin/opencode (deleted)"),
+    );
+    expect(path).toBeNull();
+  });
+
+  it("is null when the link cannot be read", async () => {
+    const path = await readProcfsExecutable(
+      100,
+      procfs(async () => {
+        throw Object.assign(new Error("EACCES"), { code: "EACCES" });
+      }),
+    );
+    expect(path).toBeNull();
+  });
+
+  it("is null where there is no procfs to read", async () => {
+    expect(await readProcfsExecutable(100, FD_TTY_DISCOVERY)).toBeNull();
   });
 });
 

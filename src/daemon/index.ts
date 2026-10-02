@@ -58,6 +58,7 @@ import {
   discoverAgentProcesses,
   discoverAgentProcessesOrThrow,
   ProcessDiscoveryError,
+  readProcfsExecutable,
 } from "./processes";
 import { ScanHealth } from "./scan-health";
 import {
@@ -903,6 +904,9 @@ export class Daemon {
   private async resolveProcessExecutablePath(
     pid: number,
   ): Promise<string | undefined> {
+    const procfsPath = await readProcfsExecutable(pid);
+    if (procfsPath) return procfsPath;
+
     try {
       const lines = await this.getLsofLines(pid);
       let expectTxtPath = false;
